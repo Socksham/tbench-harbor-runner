@@ -21,7 +21,8 @@ async def create_job_and_queue_runs(
     """Create a job and queue all runs"""
     
     job_id = str(uuid.uuid4())
-    job_dir = Path(settings.jobs_dir) / job_id
+    # Use absolute path to ensure Celery workers can find it
+    job_dir = settings.jobs_dir_absolute / job_id
     job_dir.mkdir(parents=True, exist_ok=True)
     
     # Copy task to job directory
@@ -32,11 +33,15 @@ async def create_job_and_queue_runs(
         task_dest.mkdir(parents=True, exist_ok=True)
         shutil.copy2(task_path, task_dest)
     
+    # Resolve to absolute paths
+    task_dest_abs = task_dest.resolve()
+    job_dir_abs = job_dir.resolve()
+    
     # Create job in database
     job = Job(
         id=job_id,
         task_name=task_name,
-        task_path=str(task_dest),
+        task_path=str(task_dest_abs),
         harness=harness.value,
         model=model.value,
         status=JobStatus.PENDING
@@ -56,13 +61,13 @@ async def create_job_and_queue_runs(
         )
         session.add(run)
         
-        # Queue Celery task
+        # Queue Celery task with absolute paths
         run_harbor_task.delay(
             job_id=job_id,
             run_id=run_id,
             run_number=i,
-            task_path=str(task_dest),
-            output_dir=str(job_dir),
+            task_path=str(task_dest_abs),
+            output_dir=str(job_dir_abs),
             model=model.value,
             openrouter_key=openrouter_key
         )

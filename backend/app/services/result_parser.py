@@ -61,12 +61,19 @@ def read_harbor_logs(result_path: Path) -> str:
     # Try trial.log first
     trial_log = result_path / "trial.log"
     if trial_log.exists():
-        return trial_log.read_text()
+        trial_content = trial_log.read_text()
+        if trial_content.strip():  # Only use if not empty
+            return trial_content
     
-    # Try agent/oracle.txt
-    agent_log = result_path / "agent" / "oracle.txt"
-    if agent_log.exists():
-        return agent_log.read_text()
+    # Try to find any agent log file (agent name varies: oracle.txt, TERMINUS_2.txt, etc.)
+    agent_dir = result_path / "agent"
+    if agent_dir.exists() and agent_dir.is_dir():
+        # Find any .txt file in the agent directory
+        agent_logs = list(agent_dir.glob("*.txt"))
+        if agent_logs:
+            # Use the largest .txt file found (usually the main agent log)
+            agent_log = max(agent_logs, key=lambda p: p.stat().st_size if p.exists() else 0)
+            return agent_log.read_text()
     
     # Try exception.txt if exists
     exception_log = result_path / "exception.txt"

@@ -9,7 +9,7 @@ pip install -r requirements.txt
 
 2. Install Harbor:
 ```bash
-pip install harbor-harness
+pip install harbor
 # OR
 uv tool install harbor
 ```
@@ -19,6 +19,11 @@ uv tool install harbor
 # Using Docker
 docker run -d -p 5432:5432 -e POSTGRES_PASSWORD=postgres postgres
 docker run -d -p 6379:6379 redis
+
+# Create the database (replace CONTAINER_ID with your PostgreSQL container ID)
+docker exec CONTAINER_ID psql -U postgres -c "CREATE DATABASE tbench;"
+# Or find container ID first:
+docker ps --filter "ancestor=postgres" --format "{{.ID}}"
 ```
 
 4. Create `.env` file from `.env.example`:

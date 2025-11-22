@@ -1,5 +1,6 @@
 from pydantic_settings import BaseSettings
 from typing import Optional
+from pathlib import Path
 
 class Settings(BaseSettings):
     # API Settings
@@ -25,6 +26,16 @@ class Settings(BaseSettings):
     # Harbor Settings
     harbor_timeout_multiplier: float = 1.0
     max_concurrent_runs_per_worker: int = 1
+    
+    @property
+    def jobs_dir_absolute(self) -> Path:
+        """Get absolute path to jobs directory"""
+        return Path(self.jobs_dir).resolve()
+    
+    @property
+    def uploads_dir_absolute(self) -> Path:
+        """Get absolute path to uploads directory"""
+        return Path(self.uploads_dir).resolve()
     
     class Config:
         env_file = ".env"

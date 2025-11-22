@@ -40,51 +40,52 @@ def run_harbor_task(
 ):
     """Celery task to run a single Harbor execution"""
     
-    async def update_run_status(status: JobStatus, **kwargs):
-        async with AsyncSessionLocal() as session:
-            run = await session.get(Run, run_id)
-            if run:
-                run.status = status
-                for key, value in kwargs.items():
-                    setattr(run, key, value)
-                await session.commit()
-    
-    try:
-        # Update status to running
-        asyncio.run(update_run_status(
-            JobStatus.RUNNING,
-            started_at=datetime.utcnow()
-        ))
-        
-        # Initialize Harbor service
-        harbor_service = HarborService(openrouter_key)
-        
-        # Convert model string to ModelType enum
-        model_enum = ModelType(model)
-        
-        # Run task (synchronous call to async function)
-        result = asyncio.run(harbor_service.run_task(
-            task_path=Path(task_path),
-            output_dir=Path(output_dir),
-            run_number=run_number,
-            model=model_enum,
-        ))
-        
-        # Update database with results
-        asyncio.run(update_run_status(
-            JobStatus.COMPLETED if result["status"] == "completed" else JobStatus.FAILED,
-            tests_passed=result.get("tests_passed", 0),
-            tests_total=result.get("tests_total", 0),
-            logs=result.get("logs", ""),
-            result_path=result.get("result_path"),
-            error=result.get("error"),
-            completed_at=datetime.utcnow()
-        ))
-        
-        # Update job status if all runs are done
-        async def check_job_completion():
+    async def run_async_task():
+        """Run all async operations in a single event loop"""
+        async def update_run_status(status: JobStatus, **kwargs):
             async with AsyncSessionLocal() as session:
-                from sqlalchemy import select, func
+                run = await session.get(Run, run_id)
+                if run:
+                    run.status = status
+                    for key, value in kwargs.items():
+                        setattr(run, key, value)
+                    await session.commit()
+        
+        try:
+            # Update status to running
+            await update_run_status(
+                JobStatus.RUNNING,
+                started_at=datetime.utcnow()
+            )
+            
+            # Initialize Harbor service
+            harbor_service = HarborService(openrouter_key)
+            
+            # Convert model string to ModelType enum
+            model_enum = ModelType(model)
+            
+            # Run Harbor task
+            result = await harbor_service.run_task(
+                task_path=Path(task_path),
+                output_dir=Path(output_dir),
+                run_number=run_number,
+                model=model_enum,
+            )
+            
+            # Update database with results
+            await update_run_status(
+                JobStatus.COMPLETED if result["status"] == "completed" else JobStatus.FAILED,
+                tests_passed=result.get("tests_passed", 0),
+                tests_total=result.get("tests_total", 0),
+                logs=result.get("logs", ""),
+                result_path=result.get("result_path"),
+                error=result.get("error"),
+                completed_at=datetime.utcnow()
+            )
+            
+            # Update job status if all runs are done
+            async with AsyncSessionLocal() as session:
+                from sqlalchemy import select
                 runs = await session.execute(
                     select(Run).where(Run.job_id == job_id)
                 )
@@ -96,19 +97,23 @@ def run_harbor_task(
                         job.status = JobStatus.COMPLETED
                         job.completed_at = datetime.utcnow()
                         await session.commit()
-        
-        asyncio.run(check_job_completion())
-        
+            
+            return result
+            
+        except Exception as exc:
+            # Update status to failed
+            await update_run_status(
+                JobStatus.FAILED,
+                error=str(exc),
+                completed_at=datetime.utcnow()
+            )
+            raise
+    
+    # Run all async operations in a single event loop
+    try:
+        result = asyncio.run(run_async_task())
         return result
-        
     except Exception as exc:
-        # Update status to failed
-        asyncio.run(update_run_status(
-            JobStatus.FAILED,
-            error=str(exc),
-            completed_at=datetime.utcnow()
-        ))
-        
         # Retry logic
         raise self.retry(exc=exc, countdown=60)
 

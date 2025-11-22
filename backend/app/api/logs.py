@@ -12,14 +12,39 @@ async def stream_run_logs(job_id: str, run_number: int):
     """Stream logs for a specific run using Server-Sent Events"""
     
     async def event_generator():
-        job_dir = Path(settings.jobs_dir) / job_id
+        job_dir = settings.jobs_dir_absolute / job_id
         
-        # Try multiple possible log locations
-        log_paths = [
+        # Find trial directory (job_run_1/task__XXX/)
+        trial_dir = None
+        job_run_dir = job_dir / f"job_run_{run_number}"
+        if job_run_dir.exists():
+            # Look for task__XXX directories
+            for item in job_run_dir.iterdir():
+                if item.is_dir() and item.name.startswith("task__"):
+                    trial_dir = item
+                    break
+        
+        # Build list of possible log paths
+        log_paths = []
+        
+        # Try trial.log in trial directory
+        if trial_dir:
+            log_paths.append(trial_dir / "trial.log")
+            log_paths.append(trial_dir / "exception.txt")
+            # Try to find any agent log file dynamically
+            agent_dir = trial_dir / "agent"
+            if agent_dir.exists() and agent_dir.is_dir():
+                agent_logs = list(agent_dir.glob("*.txt"))
+                if agent_logs:
+                    # Use the largest agent log file
+                    agent_log = max(agent_logs, key=lambda p: p.stat().st_size if p.exists() else 0)
+                    log_paths.append(agent_log)
+        
+        # Fallback to old structure
+        log_paths.extend([
             job_dir / f"run_{run_number}" / "trial.log",
-            job_dir / f"run_{run_number}" / "agent" / "oracle.txt",
             job_dir / f"run_{run_number}" / "exception.txt",
-        ]
+        ])
         
         last_positions = {str(p): 0 for p in log_paths}
         found_log = False
