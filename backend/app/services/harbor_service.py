@@ -37,9 +37,12 @@ class HarborService:
             output_dir_abs = Path(output_dir).resolve()
             task_path_abs = Path(task_path).resolve()
             
+            # Create unique job name suffix to avoid conflicts when multiple runs execute concurrently
+            job_suffix = secrets.token_hex(4)
+            
             # Create Harbor config with absolute paths
             config = {
-                "job_name": f"job_run_{run_number}",
+                "job_name": f"job_run_{run_number}_{job_suffix}",
                 "jobs_dir": str(output_dir_abs),
                 "n_attempts": 1,
                 "timeout_multiplier": timeout_multiplier,

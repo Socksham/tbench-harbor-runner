@@ -1,13 +1,13 @@
 from celery import Celery
 from app.services.harbor_service import HarborService
-from app.db.database import AsyncSessionLocal
+from app.db.database_sync import SyncSessionLocal
 from app.db.models import Run, Job
 from app.models.schemas import JobStatus, ModelType
 from pathlib import Path
 from datetime import datetime
-import os
 import asyncio
 from app.config import settings
+from sqlalchemy import select
 
 celery_app = Celery(
     'harbor_worker',
@@ -40,80 +40,112 @@ def run_harbor_task(
 ):
     """Celery task to run a single Harbor execution"""
     
-    async def run_async_task():
-        """Run all async operations in a single event loop"""
-        async def update_run_status(status: JobStatus, **kwargs):
-            async with AsyncSessionLocal() as session:
-                run = await session.get(Run, run_id)
+    def update_run_status(status: JobStatus, **kwargs):
+        """Update run status using sync database"""
+        with SyncSessionLocal() as session:
+            try:
+                run = session.get(Run, run_id)
                 if run:
                     run.status = status
                     for key, value in kwargs.items():
                         setattr(run, key, value)
-                    await session.commit()
-        
-        try:
-            # Update status to running
-            await update_run_status(
-                JobStatus.RUNNING,
-                started_at=datetime.utcnow()
-            )
-            
-            # Initialize Harbor service
-            harbor_service = HarborService(openrouter_key)
-            
-            # Convert model string to ModelType enum
-            model_enum = ModelType(model)
-            
-            # Run Harbor task
-            result = await harbor_service.run_task(
-                task_path=Path(task_path),
-                output_dir=Path(output_dir),
-                run_number=run_number,
-                model=model_enum,
-            )
-            
-            # Update database with results
-            await update_run_status(
-                JobStatus.COMPLETED if result["status"] == "completed" else JobStatus.FAILED,
-                tests_passed=result.get("tests_passed", 0),
-                tests_total=result.get("tests_total", 0),
-                logs=result.get("logs", ""),
-                result_path=result.get("result_path"),
-                error=result.get("error"),
-                completed_at=datetime.utcnow()
-            )
-            
-            # Update job status if all runs are done
-            async with AsyncSessionLocal() as session:
-                from sqlalchemy import select
-                runs = await session.execute(
-                    select(Run).where(Run.job_id == job_id)
-                )
-                all_runs = list(runs.scalars().all())
-                
-                if all(run.status in [JobStatus.COMPLETED, JobStatus.FAILED] for run in all_runs):
-                    job = await session.get(Job, job_id)
-                    if job:
-                        job.status = JobStatus.COMPLETED
-                        job.completed_at = datetime.utcnow()
-                        await session.commit()
-            
-            return result
-            
-        except Exception as exc:
-            # Update status to failed
-            await update_run_status(
-                JobStatus.FAILED,
-                error=str(exc),
-                completed_at=datetime.utcnow()
-            )
-            raise
+                    session.commit()
+            except Exception as e:
+                session.rollback()
+                raise
     
-    # Run all async operations in a single event loop
-    try:
-        result = asyncio.run(run_async_task())
+    async def run_harbor_async():
+        """Run Harbor service (needs async for subprocess)"""
+        harbor_service = HarborService(openrouter_key)
+        model_enum = ModelType(model)
+        
+        result = await harbor_service.run_task(
+            task_path=Path(task_path),
+            output_dir=Path(output_dir),
+            run_number=run_number,
+            model=model_enum,
+        )
         return result
+    
+    try:
+        # Update status to running (sync DB - no event loop issues!)
+        update_run_status(
+            JobStatus.RUNNING,
+            started_at=datetime.utcnow()
+        )
+        
+        # Run Harbor task (needs async for subprocess management)
+        result = asyncio.run(run_harbor_async())
+        
+        # Update database with results (sync DB)
+        update_run_status(
+            JobStatus.COMPLETED if result["status"] == "completed" else JobStatus.FAILED,
+            tests_passed=result.get("tests_passed", 0),
+            tests_total=result.get("tests_total", 0),
+            logs=result.get("logs", ""),
+            result_path=result.get("result_path"),
+            error=result.get("error"),
+            completed_at=datetime.utcnow()
+        )
+        
+        # Update job status if all runs are done (sync DB)
+        # Use retry logic with exponential backoff to handle concurrent updates
+        max_retries = 3
+        for attempt in range(max_retries):
+            with SyncSessionLocal() as session:
+                try:
+                    runs = session.execute(
+                        select(Run).where(Run.job_id == job_id)
+                    )
+                    all_runs = list(runs.scalars().all())
+                    
+                    if all(run.status in [JobStatus.COMPLETED, JobStatus.FAILED] for run in all_runs):
+                        job = session.get(Job, job_id)
+                        if job and job.status not in [JobStatus.COMPLETED, JobStatus.FAILED]:
+                            job.status = JobStatus.COMPLETED
+                            job.completed_at = datetime.utcnow()
+                            session.commit()
+                            break  # Success, exit retry loop
+                        else:
+                            # Job already updated by another worker, no need to retry
+                            session.commit()
+                            break
+                    else:
+                        # Not all runs complete yet, no update needed
+                        session.commit()
+                        break
+                except Exception as e:
+                    session.rollback()
+                    if attempt == max_retries - 1:
+                        # Last attempt failed, log but don't raise (another worker may have succeeded)
+                        print(f"Failed to update job status after {max_retries} attempts: {e}")
+                    else:
+                        import time
+                        time.sleep(0.1 * (2 ** attempt))  # Exponential backoff
+        
+        return result
+        
     except Exception as exc:
-        # Retry logic
-        raise self.retry(exc=exc, countdown=60)
-
+        # Update status to failed (sync DB)
+        try:
+            error_msg = str(exc)
+            # Truncate long errors to prevent database issues
+            if len(error_msg) > 10000:
+                error_msg = error_msg[:10000] + "... (truncated)"
+            
+            update_run_status(
+                JobStatus.FAILED,
+                error=error_msg,
+                completed_at=datetime.utcnow()
+            )
+        except Exception as db_error:
+            # Log but don't fail if we can't update status
+            print(f"Failed to update run status: {db_error}")
+            pass
+        
+        # Only retry on certain exceptions, not all
+        if isinstance(exc, (ConnectionError, TimeoutError, OSError)):
+            raise self.retry(exc=exc, countdown=60)
+        else:
+            # Don't retry on configuration or validation errors
+            raise
