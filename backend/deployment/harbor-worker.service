@@ -1,0 +1,47 @@
+[Unit]
+Description=Harbor Celery Worker for Terminal-Bench Runner
+After=network.target docker.service
+Wants=docker.service
+
+[Service]
+Type=exec
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/home/ubuntu/tbench-harbor-runner/backend
+Environment="PATH=/home/ubuntu/.local/bin:/usr/local/bin:/usr/bin:/bin"
+EnvironmentFile=/home/ubuntu/tbench-harbor-runner/backend/.env
+
+# Celery worker command
+# CONCURRENCY will be replaced by install script
+ExecStart=/home/ubuntu/.local/bin/celery -A workers.harbor_worker worker \
+    --loglevel=info \
+    --concurrency=CONCURRENCY_PLACEHOLDER \
+    --max-tasks-per-child=50 \
+    --hostname=worker-$(hostname)@%%h
+
+# Restart policy
+Restart=always
+RestartSec=10
+StartLimitInterval=5min
+StartLimitBurst=10
+
+# Resource limits (optional - adjust based on your instance size)
+# Prevent runaway processes
+LimitNOFILE=65536
+# Each Harbor job can use significant memory
+# For 60 concurrent jobs, allow plenty of memory
+MemoryMax=80%
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=harbor-worker
+
+# Graceful shutdown
+# Give Celery time to finish current tasks
+TimeoutStopSec=300
+KillMode=mixed
+KillSignal=SIGTERM
+
+[Install]
+WantedBy=multi-user.target
