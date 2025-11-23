@@ -74,6 +74,18 @@ def run_harbor_task(
             started_at=datetime.utcnow()
         )
         
+        # Update job status to RUNNING if it's still PENDING (when first run starts)
+        with SyncSessionLocal() as session:
+            try:
+                job = session.get(Job, job_id)
+                if job and job.status == JobStatus.PENDING:
+                    job.status = JobStatus.RUNNING
+                    session.commit()
+            except Exception as e:
+                session.rollback()
+                # Don't fail the task if job status update fails
+                pass
+        
         # Run Harbor task (needs async for subprocess management)
         result = asyncio.run(run_harbor_async())
         

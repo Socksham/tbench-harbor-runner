@@ -4,12 +4,92 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from pathlib import Path
 import tempfile
 import shutil
+from typing import List
 from app.db.database import get_db
 from app.services.task_extractor import extract_and_validate_task, extract_task_name
 from app.services.job_manager import create_job_and_queue_runs
 from app.models.schemas import HarnessType, ModelType, UploadResponse
 
 router = APIRouter()
+
+@router.post("/batch", response_model=List[UploadResponse])
+async def upload_tasks_batch(
+    files: List[UploadFile] = File(...),
+    harness: HarnessType = Form(...),
+    model: ModelType = Form(...),
+    openrouter_key: str = Form(...),
+    n_runs: int = Form(10),
+    db: AsyncSession = Depends(get_db)
+):
+    """Upload multiple zipped Terminal-Bench tasks and queue runs for each"""
+    
+    if not files:
+        raise HTTPException(status_code=400, detail="At least one file is required")
+    
+    if n_runs < 1 or n_runs > 100:
+        raise HTTPException(status_code=400, detail="n_runs must be between 1 and 100")
+    
+    results = []
+    
+    for file in files:
+        if not file.filename or not file.filename.endswith('.zip'):
+            results.append(UploadResponse(
+                job_id="",
+                status="failed",
+                runs_queued=0,
+                message=f"File '{file.filename}' is not a .zip file"
+            ))
+            continue
+        
+        # Create temporary directory for extraction
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            zip_path = temp_path / file.filename
+            
+            # Save uploaded file
+            with open(zip_path, 'wb') as f:
+                content = await file.read()
+                f.write(content)
+            
+            try:
+                # Extract and validate task structure
+                task_path = await extract_and_validate_task(zip_path, temp_path, harness)
+                task_name = extract_task_name(task_path)
+                
+                # Create job and queue runs
+                job = await create_job_and_queue_runs(
+                    session=db,
+                    task_path=task_path,
+                    task_name=task_name,
+                    harness=harness,
+                    model=model,
+                    openrouter_key=openrouter_key,
+                    n_runs=n_runs
+                )
+                
+                results.append(UploadResponse(
+                    job_id=job.id,
+                    status="queued",
+                    runs_queued=n_runs,
+                    message=f"Task '{task_name}' uploaded successfully. {n_runs} runs queued."
+                ))
+                
+            except ValueError as e:
+                results.append(UploadResponse(
+                    job_id="",
+                    status="failed",
+                    runs_queued=0,
+                    message=f"Error processing '{file.filename}': {str(e)}"
+                ))
+            except Exception as e:
+                results.append(UploadResponse(
+                    job_id="",
+                    status="failed",
+                    runs_queued=0,
+                    message=f"Error processing '{file.filename}': {str(e)}"
+                ))
+    
+    return results
 
 @router.post("/", response_model=UploadResponse)
 async def upload_task(
