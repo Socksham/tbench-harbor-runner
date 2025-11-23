@@ -27,6 +27,20 @@ class Settings(BaseSettings):
     harbor_timeout_multiplier: float = 1.0
     max_concurrent_runs_per_worker: int = 1
     
+    # Docker Configuration (for remote Docker daemon)
+    # Leave empty to use local Docker socket (/var/run/docker.sock)
+    docker_host: Optional[str] = None  # e.g., "tcp://remote-host:2376"
+    docker_tls_verify: str = "0"  # "1" for TLS, "0" for no TLS
+    docker_cert_path: Optional[str] = None  # Path to TLS certificates if using TLS
+    
+    # Remote Execution Settings (for running Harbor on remote host)
+    remote_execution_enabled: bool = False
+    remote_host: Optional[str] = None  # e.g., "ubuntu@ec2-ip-address" or "user@hostname"
+    remote_ssh_key_path: Optional[str] = None  # Path to SSH private key (e.g., "~/.ssh/ec2-key.pem")
+    remote_work_dir: str = "/tmp/harbor-jobs"  # Working directory on remote host
+    remote_python_path: str = "python3"  # Python path on remote host (if needed)
+    remote_ssh_port: int = 22  # SSH port (default 22)
+    
     @property
     def jobs_dir_absolute(self) -> Path:
         """Get absolute path to jobs directory"""

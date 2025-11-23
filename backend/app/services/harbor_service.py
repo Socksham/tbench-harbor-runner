@@ -6,6 +6,7 @@ import subprocess
 from typing import Dict, Any
 from app.models.schemas import ModelType
 from app.services.result_parser import parse_harbor_results, read_harbor_logs
+from app.services.remote_harbor_service import RemoteHarborService
 from app.config import settings
 
 class HarborService:
@@ -24,6 +25,15 @@ class HarborService:
     ) -> Dict[str, Any]:
         """Run a single Harbor task execution"""
         
+        # Check if remote execution is enabled
+        if settings.remote_execution_enabled and settings.remote_host:
+            print(f"[HarborService] Using remote execution on {settings.remote_host}")
+            remote_service = RemoteHarborService(self.openrouter_key)
+            return await remote_service.run_task(
+                task_path, output_dir, run_number, model, timeout_multiplier
+            )
+        
+        # Continue with local execution
         if timeout_multiplier is None:
             timeout_multiplier = settings.harbor_timeout_multiplier
         
@@ -113,6 +123,28 @@ class HarborService:
             # If that doesn't work, we may need to use Harbor's Python API or different CLI flags
             env = os.environ.copy()
             env['OPENROUTER_API_KEY'] = self.openrouter_key
+            
+            # Configure remote Docker if specified
+            # Harbor should respect DOCKER_HOST environment variable
+            # Note: Harbor's internal docker compose subprocess calls will inherit this
+            if settings.docker_host:
+                env['DOCKER_HOST'] = settings.docker_host
+                # Only set TLS vars if actually using TLS
+                if settings.docker_tls_verify == "1":
+                    env['DOCKER_TLS_VERIFY'] = "1"
+                    if settings.docker_cert_path:
+                        env['DOCKER_CERT_PATH'] = settings.docker_cert_path
+                else:
+                    # Explicitly unset TLS vars when not using TLS to avoid Docker looking for certs
+                    env.pop('DOCKER_TLS_VERIFY', None)
+                    env.pop('DOCKER_CERT_PATH', None)
+                print(f"[HarborService] Using remote Docker: {settings.docker_host} (TLS: {settings.docker_tls_verify})")
+            else:
+                # Use local Docker socket (default behavior)
+                # Make sure TLS vars are not set
+                env.pop('DOCKER_TLS_VERIFY', None)
+                env.pop('DOCKER_CERT_PATH', None)
+                print("[HarborService] Using local Docker daemon")
             
             # Try running Harbor with config file first
             # If Harbor doesn't support --config, try alternative approaches
