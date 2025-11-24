@@ -257,6 +257,3 @@ echo "✓ Termination handler updated and restarted"
 echo ""
 echo "Check logs:"
 echo "  tail -f /var/log/harbor-termination-handler.log"
-EOF
-
-chmod +x /Users/sakshamgupta/Desktop/tbench-harbor-runner/backend/deployment/fix_termination_handler.sh
