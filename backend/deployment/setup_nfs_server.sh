@@ -21,7 +21,7 @@ fi
 
 # Configuration
 SHARED_DIR="/shared/harbor-jobs"
-SUBNET="10.0.0.0/16"  # Adjust to your VPC subnet, or use * for all
+SUBNET="*"  # Adjust to your VPC subnet, or use * for all
 
 echo "This script will:"
 echo "  1. Install NFS server"
