@@ -36,7 +36,8 @@ def run_harbor_task(
     task_path: str,
     output_dir: str,
     model: str,
-    openrouter_key: str
+    openrouter_key: str,
+    agent_name: str = "terminus-2"
 ):
     """Celery task to run a single Harbor execution"""
     
@@ -58,12 +59,13 @@ def run_harbor_task(
         """Run Harbor service (needs async for subprocess)"""
         harbor_service = HarborService(openrouter_key)
         model_enum = ModelType(model)
-        
+
         result = await harbor_service.run_task(
             task_path=Path(task_path),
             output_dir=Path(output_dir),
             run_number=run_number,
             model=model_enum,
+            agent_name=agent_name
         )
         return result
     
@@ -95,6 +97,8 @@ def run_harbor_task(
             tests_passed=result.get("tests_passed", 0),
             tests_total=result.get("tests_total", 0),
             logs=result.get("logs", ""),
+            episodes=result.get("episodes", []),
+            agent_name=agent_name,
             result_path=result.get("result_path"),
             error=result.get("error"),
             completed_at=datetime.utcnow()

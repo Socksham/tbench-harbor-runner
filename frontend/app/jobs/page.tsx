@@ -92,11 +92,18 @@ export default function JobsPage() {
     const completedRuns = jobs.reduce((sum, job) => 
       sum + job.runs.filter(r => r.status === 'completed').length
     , 0);
+    const finishedRuns = jobs.reduce((sum, job) =>
+      sum + job.runs.filter(r => r.status === 'completed' || r.status === 'failed').length
+    , 0);
     const passedRuns = jobs.reduce((sum, job) => 
-      sum + job.runs.filter(r => r.tests_passed && r.tests_total && r.tests_passed === r.tests_total).length
+      sum + job.runs.filter(r => {
+        const passed = typeof r.tests_passed === 'number' ? r.tests_passed : null;
+        const totalTests = typeof r.tests_total === 'number' ? r.tests_total : null;
+        return totalTests && totalTests > 0 && passed === totalTests;
+      }).length
     , 0);
 
-    return { total, completed, running, failed, pending, totalRuns, completedRuns, passedRuns };
+    return { total, completed, running, failed, pending, totalRuns, completedRuns, finishedRuns, passedRuns };
   };
 
   const stats = getTotalStats();
@@ -241,10 +248,12 @@ export default function JobsPage() {
         ) : (
           <div className="space-y-4">
             {filteredJobs.map((job) => {
-              const completedRuns = job.runs.filter(r => r.status === 'completed').length;
-              const passedRuns = job.runs.filter(r => 
-                r.tests_passed && r.tests_total && r.tests_passed === r.tests_total
-              ).length;
+              const finishedRuns = job.runs.filter(r => r.status === 'completed' || r.status === 'failed').length;
+              const passedRuns = job.runs.filter(r => {
+                const passed = typeof r.tests_passed === 'number' ? r.tests_passed : null;
+                const totalTests = typeof r.tests_total === 'number' ? r.tests_total : null;
+                return totalTests && totalTests > 0 && passed === totalTests;
+              }).length;
               const totalTests = job.runs.reduce((sum, r) => sum + (r.tests_passed || 0), 0);
               const totalTestCases = job.runs.reduce((sum, r) => sum + (r.tests_total || 0), 0);
 
@@ -269,11 +278,11 @@ export default function JobsPage() {
                         <span>{job.model}</span>
                         <span>•</span>
                         <span>{job.runs.length} runs</span>
-                        {completedRuns > 0 && (
+                        {finishedRuns > 0 && (
                           <>
                             <span>•</span>
                             <span className="text-green-600 font-medium">
-                              {passedRuns}/{completedRuns} passed
+                              {passedRuns}/{finishedRuns} passed
                             </span>
                           </>
                         )}

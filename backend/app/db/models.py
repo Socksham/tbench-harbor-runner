@@ -1,5 +1,6 @@
 from sqlalchemy import Column, String, Integer, DateTime, Text, Enum as SQLEnum
 from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.dialects.postgresql import JSON
 from datetime import datetime
 from app.models.schemas import JobStatus
 
@@ -19,7 +20,7 @@ class Job(Base):
 
 class Run(Base):
     __tablename__ = "runs"
-    
+
     id = Column(String, primary_key=True, index=True)
     job_id = Column(String, nullable=False, index=True)
     run_number = Column(Integer, nullable=False)
@@ -27,6 +28,8 @@ class Run(Base):
     tests_passed = Column(Integer, nullable=True)
     tests_total = Column(Integer, nullable=True)
     logs = Column(Text, nullable=True)
+    episodes = Column(JSON, nullable=True)
+    agent_name = Column(String, nullable=True)
     result_path = Column(String, nullable=True)
     error = Column(Text, nullable=True)
     started_at = Column(DateTime, nullable=True)

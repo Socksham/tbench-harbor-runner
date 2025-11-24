@@ -19,6 +19,7 @@ async def upload_tasks_batch(
     model: ModelType = Form(...),
     openrouter_key: str = Form(...),
     n_runs: int = Form(10),
+    agent_name: str = Form("terminus-2"),
     db: AsyncSession = Depends(get_db)
 ):
     """Upload multiple zipped Terminal-Bench tasks and queue runs for each"""
@@ -64,7 +65,8 @@ async def upload_tasks_batch(
                     harness=harness,
                     model=model,
                     openrouter_key=openrouter_key,
-                    n_runs=n_runs
+                    n_runs=n_runs,
+                    agent_name=agent_name
                 )
                 
                 results.append(UploadResponse(
@@ -98,6 +100,7 @@ async def upload_task(
     model: ModelType = Form(...),
     openrouter_key: str = Form(...),
     n_runs: int = Form(10),
+    agent_name: str = Form("terminus-2"),
     db: AsyncSession = Depends(get_db)
 ):
     """Upload a zipped Terminal-Bench task and queue N runs"""
@@ -131,7 +134,8 @@ async def upload_task(
                 harness=harness,
                 model=model,
                 openrouter_key=openrouter_key,
-                n_runs=n_runs
+                n_runs=n_runs,
+                agent_name=agent_name
             )
             
             return UploadResponse(

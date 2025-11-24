@@ -20,7 +20,8 @@ class HarborService:
         output_dir: Path,
         run_number: int,
         model: ModelType,
-        timeout_multiplier: float = None
+        timeout_multiplier: float = None,
+        agent_name: str = "terminus-2"
     ) -> Dict[str, Any]:
         """Run a single Harbor task execution"""
 
@@ -84,18 +85,18 @@ class HarborService:
                     }
                 ],
                 "agents": [{
-                    "name": "oracle",
+                    "name": agent_name,
                     "import_path": None,
-                    "model_name": f"openrouter:{model.value}",
+                    # Use simple OpenAI model name
+                    "model_name": model.value,
                     "override_timeout_sec": None,
                     "max_timeout_sec": None,
-                    "kwargs": {
-                        "api_key": self.openrouter_key
-                    }
+                    "kwargs": {}
                 }],
                 "tasks": [{
                     "path": str(task_path_abs),
-                    "source": "uploaded",
+                    # Leave source unset/adhoc so Harbor metrics fallback works
+                    "source": None,
                     "overwrite": False,
                     "download_dir": None
                 }]
@@ -112,7 +113,29 @@ class HarborService:
             # For custom tasks, we'll try using a config file approach
             # If that doesn't work, we may need to use Harbor's Python API or different CLI flags
             env = os.environ.copy()
-            env['OPENROUTER_API_KEY'] = self.openrouter_key
+
+            # Set OpenRouter API key using the standard pattern
+            # Harbor/litellm will use OPENAI_API_KEY with OPENAI_API_BASE for routing
+            env['OPENAI_API_KEY'] = self.openrouter_key
+            env['OPENAI_API_BASE'] = 'https://openrouter.ai/api/v1'
+
+            # Unset other provider keys to ensure clean environment
+            for key in ['ANTHROPIC_API_KEY', 'GOOGLE_API_KEY', 'GEMINI_API_KEY',
+                        'COHERE_API_KEY', 'OPENROUTER_API_KEY']:
+                env.pop(key, None)
+
+            # Log configuration for debugging
+            print(f"\n{'='*80}")
+            print(f"[HarborService] Starting Harbor run {run_number}")
+            print(f"{'='*80}")
+            print(f"Agent: {agent_name}")
+            print(f"Model: {model.value}")
+            print(f"API Base: {env['OPENAI_API_BASE']}")
+            print(f"API Key (first 10 chars): {self.openrouter_key[:10]}...")
+            print(f"Task Path: {task_path_abs}")
+            print(f"Output Dir: {output_dir_abs}")
+            print(f"Config Path: {config_path}")
+            print(f"{'='*80}\n")
             
             # Configure remote Docker if specified
             # Harbor should respect DOCKER_HOST environment variable
@@ -135,7 +158,7 @@ class HarborService:
                 env.pop('DOCKER_TLS_VERIFY', None)
                 env.pop('DOCKER_CERT_PATH', None)
                 print("[HarborService] Using local Docker daemon")
-            
+
             # Try running Harbor with config file first
             # If Harbor doesn't support --config, try alternative approaches
             try:
@@ -157,11 +180,35 @@ class HarborService:
             stdout_text = stdout.decode('utf-8', errors='ignore') if stdout else ""
             stderr_text = stderr.decode('utf-8', errors='ignore') if stderr else ""
             
+            # Log execution result
+            print(f"\n{'='*80}")
+            print(f"[HarborService] Harbor run {run_number} completed")
+            print(f"{'='*80}")
+            print(f"Return Code: {process.returncode}")
+            print(f"Stdout length: {len(stdout_text)} chars")
+            print(f"Stderr length: {len(stderr_text)} chars")
+
+            # Check for authentication errors
+            if "AuthenticationError" in stderr_text or "AuthenticationError" in stdout_text:
+                print(f"⚠️  AUTHENTICATION ERROR DETECTED")
+                print(f"Model being used: {model.value}")
+                print(f"API Base: {env['OPENAI_API_BASE']}")
+                # Extract relevant error lines
+                for line in stderr_text.split('\n'):
+                    if 'AuthenticationError' in line or 'OpenAIException' in line or 'Provider returned error' in line:
+                        print(f"  Error line: {line.strip()}")
+
+            print(f"{'='*80}\n")
+
             # Save full output to files for debugging
             error_log_file = output_dir_abs / f"harbor_error_{run_number}.txt"
             with open(error_log_file, 'w') as f:
                 f.write("=== HARBOR EXECUTION DEBUG INFO ===\n\n")
                 f.write(f"Return Code: {process.returncode}\n")
+                f.write(f"Agent: {agent_name}\n")
+                f.write(f"Model: {model.value}\n")
+                f.write(f"API Base: {env['OPENAI_API_BASE']}\n")
+                f.write(f"API Key (first 10 chars): {self.openrouter_key[:10]}...\n")
                 f.write(f"Config Path: {config_path}\n")
                 f.write(f"Task Path: {task_path_abs}\n")
                 f.write(f"Output Dir: {output_dir_abs}\n\n")
@@ -187,13 +234,18 @@ class HarborService:
             if result_path and result_path.exists():
                 # Parse results
                 test_results = parse_harbor_results(result_path)
-                logs = read_harbor_logs(result_path)
+                logs, episodes = read_harbor_logs(result_path)
                 
                 # If we have valid test results, treat as success even if returncode != 0
                 if test_results.get("total", 0) > 0:
                     # Combine stdout with logs
-                    combined_logs = stdout_text
-                    
+                    combined_logs = f"=== HARBOR RUN CONFIGURATION ===\n"
+                    combined_logs += f"Agent: {agent_name}\n"
+                    combined_logs += f"Model: {model.value}\n"
+                    combined_logs += f"API Endpoint: {env['OPENAI_API_BASE']}\n"
+                    combined_logs += f"Run Number: {run_number}\n\n"
+                    combined_logs += stdout_text
+
                     # Include agent logs (most useful for users - shows actual agent execution)
                     if logs:
                         combined_logs += "\n\n--- Agent Execution Logs ---\n" + logs
@@ -224,6 +276,10 @@ class HarborService:
                             f.write(combined_logs)
                         combined_logs = combined_logs[:50000] + f"\n... (truncated, see {log_file.name} for full logs) ..."
                     
+                    all_tests_passed = (
+                        test_results["total"] > 0
+                        and test_results["passed"] == test_results["total"]
+                    )
                     return {
                         "run_number": run_number,
                         "result": {"returncode": process.returncode, "stdout": stdout_text},
@@ -232,22 +288,39 @@ class HarborService:
                         "tests_failed": test_results["failed"],
                         "test_details": test_results.get("details", []),
                         "logs": combined_logs,
+                        "episodes": episodes,
                         "result_path": str(result_path),
-                        "status": "completed" if test_results["passed"] > 0 else "failed"
+                        "status": "completed" if all_tests_passed else "failed"
                     }
             
             # If no results found and returncode != 0, treat as failure
+            # BUT still try to parse episodes if they exist
             if process.returncode != 0:
+                # Try to read episodes even if trial failed
+                episodes = []
+                if result_path and result_path.exists():
+                    try:
+                        _, episodes = read_harbor_logs(result_path)
+                    except Exception as e:
+                        print(f"[HarborService] Warning: Failed to read episodes from failed trial: {e}")
+
                 # Truncate error for database (keep last 10000 chars)
                 error_msg = stderr_text or stdout_text or "Harbor execution failed"
                 if len(error_msg) > 10000:
                     error_msg = "... (truncated, see error file) ...\n" + error_msg[-10000:]
-                
-                # Truncate logs for database too
-                combined_logs = stdout_text + "\n" + stderr_text
+
+                # Truncate logs for database too - include configuration info
+                combined_logs = f"=== HARBOR RUN CONFIGURATION ===\n"
+                combined_logs += f"Agent: {agent_name}\n"
+                combined_logs += f"Model: {model.value}\n"
+                combined_logs += f"API Endpoint: {env['OPENAI_API_BASE']}\n"
+                combined_logs += f"Run Number: {run_number}\n"
+                combined_logs += f"Status: FAILED\n\n"
+                combined_logs += "=== ERROR DETAILS ===\n"
+                combined_logs += stdout_text + "\n" + stderr_text
                 if len(combined_logs) > 50000:
                     combined_logs = combined_logs[:50000] + "\n... (truncated, see error file for full logs) ..."
-                
+
                 return {
                     "run_number": run_number,
                     "status": "failed",
@@ -255,6 +328,7 @@ class HarborService:
                     "tests_passed": 0,
                     "tests_total": 0,
                     "logs": combined_logs,
+                    "episodes": episodes,
                     "result_path": str(error_log_file) if error_log_file.exists() else None
                 }
             
@@ -262,15 +336,21 @@ class HarborService:
             # Parse results normally
             if result_path and result_path.exists():
                 test_results = parse_harbor_results(result_path)
-                logs = read_harbor_logs(result_path)
+                logs, episodes = read_harbor_logs(result_path)
             else:
                 # No results found even though returncode == 0 (shouldn't happen)
                 test_results = {"passed": 0, "total": 0, "failed": 0, "details": []}
                 logs = ""
+                episodes = []
             
             # Combine stdout with logs
-            combined_logs = stdout_text
-            
+            combined_logs = f"=== HARBOR RUN CONFIGURATION ===\n"
+            combined_logs += f"Agent: {agent_name}\n"
+            combined_logs += f"Model: {model.value}\n"
+            combined_logs += f"API Endpoint: {env['OPENAI_API_BASE']}\n"
+            combined_logs += f"Run Number: {run_number}\n\n"
+            combined_logs += stdout_text
+
             # Include agent logs (most useful for users - shows actual agent execution)
             if logs:
                 combined_logs += "\n\n--- Agent Execution Logs ---\n" + logs
@@ -288,6 +368,10 @@ class HarborService:
                     f.write(combined_logs)
                 combined_logs = combined_logs[:50000] + f"\n... (truncated, see {log_file.name} for full logs) ..."
             
+            all_tests_passed = (
+                test_results["total"] > 0
+                and test_results["passed"] == test_results["total"]
+            )
             return {
                 "run_number": run_number,
                 "result": {"returncode": process.returncode, "stdout": stdout_text},
@@ -296,18 +380,30 @@ class HarborService:
                 "tests_failed": test_results["failed"],
                 "test_details": test_results.get("details", []),
                 "logs": combined_logs,
+                "episodes": episodes,
                 "result_path": str(result_path) if result_path else None,
-                "status": "completed" if test_results["passed"] > 0 else "failed"
+                "status": "completed" if all_tests_passed else "failed"
             }
             
         except Exception as e:
+            # Try to read episodes even if exception occurred
+            episodes = []
+            result_path = None
+            try:
+                output_dir_abs = Path(output_dir).resolve()
+                result_path = self._find_result_path(output_dir_abs, f"job_run_{run_number}")
+                if result_path and result_path.exists():
+                    _, episodes = read_harbor_logs(result_path)
+            except Exception as ep_err:
+                print(f"[HarborService] Warning: Failed to read episodes from exception case: {ep_err}")
+
             # Save full error to file for debugging
             try:
                 output_dir_abs = Path(output_dir).resolve()
                 error_file = output_dir_abs / f"error_{run_number}.txt"
                 import traceback
                 full_traceback = traceback.format_exc()
-                
+
                 with open(error_file, 'w') as f:
                     f.write("=== EXCEPTION OCCURRED ===\n\n")
                     f.write(f"Error: {str(e)}\n\n")
@@ -317,12 +413,12 @@ class HarborService:
             except Exception:
                 # If we can't write the error file, continue anyway
                 pass
-            
+
             # Truncate error for database (keep last 10000 chars)
             error_msg = str(e)
             if len(error_msg) > 10000:
                 error_msg = "... (truncated, see error file) ...\n" + error_msg[-10000:]
-            
+
             return {
                 "run_number": run_number,
                 "status": "failed",
@@ -330,6 +426,7 @@ class HarborService:
                 "tests_passed": 0,
                 "tests_total": 0,
                 "logs": error_msg,
+                "episodes": episodes,
                 "result_path": str(error_file) if 'error_file' in locals() else None
             }
     

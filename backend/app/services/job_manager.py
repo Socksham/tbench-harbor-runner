@@ -16,7 +16,8 @@ async def create_job_and_queue_runs(
     harness: HarnessType,
     model: ModelType,
     openrouter_key: str,
-    n_runs: int = 10
+    n_runs: int = 10,
+    agent_name: str = "terminus-2"
 ) -> Job:
     """Create a job and queue all runs"""
     
@@ -69,7 +70,8 @@ async def create_job_and_queue_runs(
             task_path=str(task_dest_abs),
             output_dir=str(job_dir_abs),
             model=model.value,
-            openrouter_key=openrouter_key
+            openrouter_key=openrouter_key,
+            agent_name=agent_name
         )
     
     await session.commit()

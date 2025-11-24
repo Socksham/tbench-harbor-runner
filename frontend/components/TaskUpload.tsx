@@ -182,6 +182,8 @@ export default function TaskUpload() {
                 className="w-full px-3 py-2.5 border-2 border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all bg-white hover:border-slate-300 text-sm text-slate-900"
               >
                 <option value="openai/gpt-4o">GPT-4o</option>
+                <option value="openai/gpt-4o-mini">GPT-4o Mini</option>
+                <option value="openai/gpt-5-mini">GPT-5 Mini</option>
                 <option value="anthropic/claude-3.5-sonnet">Claude 3.5 Sonnet</option>
                 <option value="google/gemini-pro-1.5">Gemini Pro 1.5</option>
                 <option value="meta-llama/llama-3.1-405b-instruct">Llama 3.1 405B</option>

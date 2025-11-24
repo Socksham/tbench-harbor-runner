@@ -1,5 +1,5 @@
 import { Run } from './api';
-import { ParsedRunResult, TestCase, Episode } from './types';
+import { ParsedRunResult, TestCase, Episode, RunAlert } from './types';
 
 /**
  * Parse Harbor result JSON to extract test cases
@@ -29,29 +29,29 @@ export function parseTestCases(run: Run): TestCase[] {
 }
 
 /**
- * Parse episodes from Harbor logs
+ * Parse episodes from Harbor logs (legacy fallback)
  */
-export function parseEpisodes(logs: string | null): Episode[] {
+export function parseEpisodesFromLogs(logs: string | null): Episode[] {
   if (!logs) {
     return [];
   }
 
   const episodes: Episode[] = [];
-  
+
   // Harbor logs typically contain episode information
   // This is a simplified parser - you may need to adjust based on actual Harbor log format
   const lines = logs.split('\n');
   let currentEpisode: Episode | null = null;
   let episodeNumber = 0;
   let foundEpisodeMarkers = false;
-  
+
   for (const line of lines) {
     // Look for episode markers - be more specific to avoid false positives
     // Check for patterns like "Episode 1", "Episode:", "episode 0", etc.
-    const episodeMatch = line.match(/Episode\s+\d+/i) || 
+    const episodeMatch = line.match(/Episode\s+\d+/i) ||
                         line.match(/^Episode\s*:/i) ||
                         (line.toLowerCase().includes('episode') && /^\s*Episode/i.test(line));
-    
+
     if (episodeMatch) {
       foundEpisodeMarkers = true;
       if (currentEpisode) {
@@ -76,11 +76,11 @@ export function parseEpisodes(logs: string | null): Episode[] {
       }
     }
   }
-  
+
   if (currentEpisode) {
     episodes.push(currentEpisode);
   }
-  
+
   // Only return episodes if we found actual episode markers
   // Otherwise return empty array (logs will be shown in Container Logs section only)
   return foundEpisodeMarkers ? episodes : [];
@@ -89,10 +89,53 @@ export function parseEpisodes(logs: string | null): Episode[] {
 /**
  * Parse a Run into a ParsedRunResult
  */
+function detectRunAlerts(run: Run): RunAlert[] {
+  const alerts: RunAlert[] = [];
+  const logBlob = `${run.error || ''}\n${run.logs || ''}`.toLowerCase();
+
+  if (logBlob.includes('agenttimeouterror') || logBlob.includes('agent execution timed out')) {
+    alerts.push({
+      type: 'warning',
+      message: 'Agent execution timed out while waiting for the LLM response.',
+      hint: 'The OpenRouter call exceeded Harbor’s agent timeout (default 15 minutes). Consider reducing concurrent jobs or increasing the timeout.'
+    });
+  }
+
+  if (logBlob.includes('unclosed connection')) {
+    alerts.push({
+      type: 'info',
+      message: 'OpenAI/OpenRouter closed the HTTP connection before returning a response.',
+      hint: 'Usually caused by a network hiccup or provider throttle. Harbor cancels the attempt once the connection drops.'
+    });
+  }
+
+  if (logBlob.includes('openaiexception')) {
+    alerts.push({
+      type: 'error',
+      message: 'OpenAI/OpenRouter reported an OpenAIException during completion.',
+      hint: 'Check the logs for the provider’s error payload—this often points to quota exhaustion, invalid parameters, or a temporary upstream outage.'
+    });
+  }
+
+  if (logBlob.includes('⚠️ note: harbor metrics computation failed'.toLowerCase())) {
+    alerts.push({
+      type: 'info',
+      message: 'Harbor metrics post-processing failed, but the verifier results are still valid.',
+      hint: 'This is a known Harbor bug when running uploaded tasks; no action is required unless you need the metrics table.'
+    });
+  }
+
+  return alerts;
+}
+
 export function parseRunResult(run: Run): ParsedRunResult {
   const testCases = parseTestCases(run);
-  const episodes = parseEpisodes(run.logs);
-  
+
+  // Use structured episodes from API if available, otherwise fall back to log parsing
+  const episodes = run.episodes && run.episodes.length > 0
+    ? run.episodes
+    : parseEpisodesFromLogs(run.logs);
+
   // Determine status based on run status
   let status: 'passed' | 'failed' | 'running' | 'pending';
   if (run.status === 'pending') {
@@ -105,7 +148,7 @@ export function parseRunResult(run: Run): ParsedRunResult {
     // run.status === 'failed'
     status = 'failed';
   }
-  
+
   return {
     run_number: run.run_number,
     status,
@@ -114,6 +157,7 @@ export function parseRunResult(run: Run): ParsedRunResult {
     test_cases: testCases,
     episodes: episodes,
     logs: run.logs || '',
+    alerts: detectRunAlerts(run),
   };
 }
 

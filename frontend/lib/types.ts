@@ -6,10 +6,15 @@ export interface TestCase {
 
 export interface Episode {
   episode_number: number;
-  state_analysis?: string;
-  explanation?: string;
-  commands?: string;
-  timestamp?: string;
+  commands?: string | null;
+  explanation?: string | null;
+  state_analysis?: string | null;
+}
+
+export interface RunAlert {
+  type: 'info' | 'warning' | 'error';
+  message: string;
+  hint?: string;
 }
 
 export interface ParsedRunResult {
@@ -20,5 +25,6 @@ export interface ParsedRunResult {
   test_cases: TestCase[];
   episodes: Episode[];
   logs: string;
+  alerts: RunAlert[];
 }
 

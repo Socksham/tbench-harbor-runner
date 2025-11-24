@@ -4,6 +4,13 @@ export type HarnessType = 'harbor' | 'terminus';
 export type ModelType = 'openai/gpt-4o' | 'anthropic/claude-3.5-sonnet' | 'google/gemini-pro-1.5' | 'meta-llama/llama-3.1-405b-instruct';
 export type JobStatus = 'pending' | 'running' | 'completed' | 'failed';
 
+export interface Episode {
+  episode_number: number;
+  commands?: string | null;
+  explanation?: string | null;
+  state_analysis?: string | null;
+}
+
 export interface Run {
   id: string;
   job_id: string;
@@ -12,6 +19,8 @@ export interface Run {
   tests_passed: number | null;
   tests_total: number | null;
   logs: string | null;
+  episodes: Episode[];
+  agent_name: string | null;
   result_path: string | null;
   error: string | null;
   started_at: string | null;
@@ -53,7 +62,8 @@ export async function uploadTask(
   harness: HarnessType,
   model: ModelType,
   openrouterKey: string,
-  nRuns: number = 10
+  nRuns: number = 10,
+  agentName: string = 'terminus-2'
 ): Promise<UploadResponse> {
   const formData = new FormData();
   formData.append('file', file);
@@ -61,17 +71,18 @@ export async function uploadTask(
   formData.append('model', model);
   formData.append('openrouter_key', openrouterKey);
   formData.append('n_runs', nRuns.toString());
-  
+  formData.append('agent_name', agentName);
+
   const res = await fetch(`${API_BASE}/api/upload`, {
     method: 'POST',
     body: formData,
   });
-  
+
   if (!res.ok) {
     const error = await res.json();
     throw new Error(error.detail || 'Upload failed');
   }
-  
+
   return res.json();
 }
 
@@ -100,7 +111,8 @@ export async function uploadTasksBatch(
   harness: HarnessType,
   model: ModelType,
   openrouterKey: string,
-  nRuns: number = 10
+  nRuns: number = 10,
+  agentName: string = 'terminus-2'
 ): Promise<UploadResponse[]> {
   const formData = new FormData();
   files.forEach(file => {
@@ -110,17 +122,18 @@ export async function uploadTasksBatch(
   formData.append('model', model);
   formData.append('openrouter_key', openrouterKey);
   formData.append('n_runs', nRuns.toString());
-  
+  formData.append('agent_name', agentName);
+
   const res = await fetch(`${API_BASE}/api/upload/batch`, {
     method: 'POST',
     body: formData,
   });
-  
+
   if (!res.ok) {
     const error = await res.json();
     throw new Error(error.detail || 'Batch upload failed');
   }
-  
+
   return res.json();
 }
 

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import type { JSX } from 'react';
 import { Run } from '@/lib/api';
 import { ParsedRunResult } from '@/lib/types';
 import { parseRunResult } from '@/lib/parsers';
@@ -16,6 +16,41 @@ interface AttemptCardProps {
 
 export default function AttemptCard({ run, isExpanded, onToggle }: AttemptCardProps) {
   const parsed = parseRunResult(run);
+  const alertStyles: Record<
+    'info' | 'warning' | 'error',
+    { bg: string; border: string; icon: JSX.Element; text: string }
+  > = {
+    info: {
+      bg: 'bg-blue-50',
+      border: 'border-blue-200',
+      text: 'text-blue-800',
+      icon: (
+        <svg className="w-4 h-4 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M12 2a10 10 0 100 20 10 10 0 000-20z" />
+        </svg>
+      ),
+    },
+    warning: {
+      bg: 'bg-amber-50',
+      border: 'border-amber-200',
+      text: 'text-amber-900',
+      icon: (
+        <svg className="w-4 h-4 text-amber-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.29 3.86L1.82 18a1 1 0 00.86 1.5h18.64a1 1 0 00.86-1.5L12.71 3.86a1 1 0 00-1.72 0zM12 9v4m0 4h.01" />
+        </svg>
+      ),
+    },
+    error: {
+      bg: 'bg-red-50',
+      border: 'border-red-200',
+      text: 'text-red-900',
+      icon: (
+        <svg className="w-4 h-4 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01M12 5a7 7 0 11-7 7 7 7 0 017-7z" />
+        </svg>
+      ),
+    },
+  };
   
   // Determine status text and styling based on parsed status
   let statusText: string;
@@ -110,6 +145,25 @@ export default function AttemptCard({ run, isExpanded, onToggle }: AttemptCardPr
                   </div>
                 )}
               </div>
+              {parsed.alerts.length > 0 && (
+                <div className="w-full space-y-2 mt-3">
+                  {parsed.alerts.map((alert, idx) => {
+                    const style = alertStyles[alert.type];
+                    return (
+                      <div
+                        key={`${alert.type}-${idx}`}
+                        className={`flex gap-3 items-start rounded-lg border px-3 py-2 ${style.bg} ${style.border}`}
+                      >
+                        {style.icon}
+                        <div className={`text-sm ${style.text}`}>
+                          <p className="font-semibold">{alert.message}</p>
+                          {alert.hint && <p className="text-xs mt-1 text-slate-600">{alert.hint}</p>}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </div>
           </div>
           <div className="flex items-center gap-3">

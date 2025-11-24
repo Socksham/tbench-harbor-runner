@@ -8,8 +8,34 @@ interface EpisodeViewProps {
   episodeNumber: number;
 }
 
+// Helper function to clean up terminal output
+function cleanTerminalOutput(text: string): string {
+  // Collapse multiple consecutive newlines (more than 3) into just 2
+  return text.replace(/\n{4,}/g, '\n\n');
+}
+
+// Helper function to truncate long text
+function truncateText(text: string, maxLength: number = 800): { truncated: string; isTruncated: boolean } {
+  if (text.length <= maxLength) {
+    return { truncated: text, isTruncated: false };
+  }
+
+  // Find a good break point (end of line or word)
+  let breakPoint = maxLength;
+  const newlineIndex = text.lastIndexOf('\n', maxLength);
+  if (newlineIndex > maxLength * 0.7) {
+    breakPoint = newlineIndex;
+  }
+
+  return {
+    truncated: text.substring(0, breakPoint),
+    isTruncated: true
+  };
+}
+
 export default function EpisodeView({ episode, episodeNumber }: EpisodeViewProps) {
   const [isExpanded, setIsExpanded] = useState(episodeNumber === 0);
+  const [showFullExplanation, setShowFullExplanation] = useState(false);
 
   return (
     <div className="bg-white border-2 border-slate-200 rounded-xl overflow-hidden hover:border-blue-300 transition-all duration-200">
@@ -49,19 +75,52 @@ export default function EpisodeView({ episode, episodeNumber }: EpisodeViewProps
             </div>
           )}
 
-          {episode.explanation && (
-            <div className="border-l-4 border-indigo-500 pl-4">
-              <div className="flex items-center gap-2 mb-3">
-                <svg className="w-5 h-5 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                </svg>
-                <h6 className="text-sm font-bold text-slate-900 uppercase tracking-wide">Explanation</h6>
-              </div>
-              <p className="text-sm text-slate-700 whitespace-pre-wrap leading-relaxed">{episode.explanation}</p>
-            </div>
-          )}
+          {episode.explanation && (() => {
+            const cleanedExplanation = cleanTerminalOutput(episode.explanation);
+            const { truncated, isTruncated } = truncateText(cleanedExplanation);
+            const displayText = showFullExplanation ? cleanedExplanation : truncated;
 
-          {episode.commands && (
+            return (
+              <div className="border-l-4 border-indigo-500 pl-4">
+                <div className="flex items-center gap-2 mb-3">
+                  <svg className="w-5 h-5 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  <h6 className="text-sm font-bold text-slate-900 uppercase tracking-wide">Terminal State</h6>
+                </div>
+                <div className="bg-slate-900 text-slate-200 p-4 rounded-lg overflow-x-auto border-2 border-slate-800 shadow-inner">
+                  <pre className="text-xs font-mono leading-relaxed whitespace-pre-wrap">{displayText}</pre>
+                </div>
+                {isTruncated && (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setShowFullExplanation(!showFullExplanation);
+                    }}
+                    className="mt-2 text-sm text-indigo-600 hover:text-indigo-700 font-medium flex items-center gap-1"
+                  >
+                    {showFullExplanation ? (
+                      <>
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 15l7-7 7 7" />
+                        </svg>
+                        Show less
+                      </>
+                    ) : (
+                      <>
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                        </svg>
+                        Show full terminal output ({cleanedExplanation.length} characters)
+                      </>
+                    )}
+                  </button>
+                )}
+              </div>
+            );
+          })()}
+
+          {episode.commands && episode.commands.trim() && (
             <div>
               <div className="flex items-center gap-2 mb-3">
                 <svg className="w-5 h-5 text-emerald-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
