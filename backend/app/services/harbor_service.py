@@ -264,10 +264,13 @@ class HarborService:
                         if len(stderr_text) > 2000:
                             combined_logs += "\n... (truncated, see error file for full details) ..."
                     
-                    # Note: metrics error in stderr but trial succeeded
+                    # Note: metrics error in stderr but trial may have succeeded
                     # Add warning BEFORE truncating so it appears in the file too
                     if process.returncode != 0 and is_metrics_error:
-                        combined_logs += "\n\n⚠️ Note: Harbor metrics computation failed, but the trial completed successfully. All tests passed."
+                        if test_results["passed"] == test_results["total"] and test_results["total"] > 0:
+                            combined_logs += "\n\n⚠️ Note: Harbor metrics computation failed, but the trial completed successfully. All tests passed."
+                        else:
+                            combined_logs += "\n\n⚠️ Note: Harbor metrics computation failed."
                     
                     # Truncate logs for database if too long
                     if len(combined_logs) > 50000:
@@ -440,7 +443,8 @@ class HarborService:
         # First, look for job directory (job_run_1, etc.)
         job_dir = None
         for item in output_dir.iterdir():
-            if item.is_dir() and job_name in item.name:
+            # Use exact prefix match with underscore to avoid matching job_run_1 to job_run_11
+            if item.is_dir() and item.name.startswith(job_name + "_"):
                 job_dir = item
                 break
         
