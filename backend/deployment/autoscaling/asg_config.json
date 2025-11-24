@@ -1,0 +1,151 @@
+{
+  "_comment": "AWS Auto Scaling Group Configuration Template",
+  "_description": "This configuration enables dynamic scaling of Harbor worker EC2 instances based on Celery queue depth in Redis",
+
+  "launch_template": {
+    "name": "harbor-worker-launch-template",
+    "description": "Launch template for Harbor worker instances with auto-scaling",
+    "instance_type": "t3.2xlarge",
+    "ami_id": "ami-0c55b159cbfafe1f0",
+    "_ami_comment": "Update with your AMI ID (Ubuntu 22.04 LTS recommended)",
+    "key_name": "your-ec2-keypair",
+    "security_groups": ["sg-xxxxxxxxx"],
+    "_sg_comment": "Security group should allow: SSH (22), Docker (2375 optional), NFS (2049), outbound all",
+
+    "iam_instance_profile": "harbor-worker-role",
+    "_iam_comment": "IAM role for CloudWatch metrics and SSM access",
+
+    "user_data_script": "#!/bin/bash\n# This script runs on instance launch\nset -e\n\n# Mount NFS\nsudo mkdir -p /shared/harbor-jobs\nsudo mount -t nfs4 NFS_SERVER_IP:/shared/harbor-jobs /shared/harbor-jobs\necho \"NFS_SERVER_IP:/shared/harbor-jobs /shared/harbor-jobs nfs4 defaults,_netdev 0 0\" | sudo tee -a /etc/fstab\n\n# Clone repo and setup worker\ncd /home/ubuntu\ngit clone https://github.com/your-org/tbench-harbor-runner.git\ncd tbench-harbor-runner/backend\n\n# Create .env from template\ncat > .env << 'EOF'\nDATABASE_URL=postgresql+asyncpg://postgres:postgres@POSTGRES_IP:5432/tbench\nREDIS_URL=redis://REDIS_IP:6379/0\nDEFAULT_OPENROUTER_KEY=YOUR_KEY_HERE\nJOBS_DIR=/shared/harbor-jobs/jobs\nUPLOADS_DIR=/shared/harbor-jobs/uploads\nDOCKER_HOST=\nEOF\n\n# Install and start worker service\nsudo ./deployment/install_worker_service.sh 60\n\n# Enable CloudWatch monitoring\nsudo ./deployment/setup_cloudwatch_agent.sh\n",
+
+    "block_device_mappings": [{
+      "device_name": "/dev/sda1",
+      "ebs": {
+        "volume_size": 100,
+        "volume_type": "gp3",
+        "delete_on_termination": true
+      }
+    }],
+
+    "tags": {
+      "Name": "harbor-worker",
+      "Environment": "production",
+      "Project": "tbench-harbor-runner",
+      "ManagedBy": "AutoScaling"
+    }
+  },
+
+  "auto_scaling_group": {
+    "name": "harbor-workers-asg",
+    "min_size": 2,
+    "_min_comment": "Keep 2 workers running at all times for availability",
+    "max_size": 20,
+    "_max_comment": "Maximum 20 workers = 1200 concurrent jobs (20 × 60)",
+    "desired_capacity": 5,
+    "_desired_comment": "Start with 5 workers = 300 concurrent jobs capacity",
+
+    "vpc_zone_identifier": ["subnet-xxxxxxxx", "subnet-yyyyyyyy"],
+    "_subnet_comment": "List of subnet IDs for multi-AZ deployment",
+
+    "health_check_type": "EC2",
+    "health_check_grace_period": 300,
+    "_health_comment": "5 minutes for instance to become healthy after launch",
+
+    "default_cooldown": 180,
+    "_cooldown_comment": "3 minutes between scaling activities",
+
+    "termination_policies": ["OldestInstance", "Default"],
+    "_termination_comment": "Terminate oldest instances first to refresh fleet"
+  },
+
+  "target_tracking_policies": {
+    "_comment": "Target tracking automatically adjusts capacity to maintain metric target",
+
+    "queue_depth_policy": {
+      "name": "scale-on-queue-depth",
+      "metric_type": "custom",
+      "target_value": 60,
+      "_target_comment": "Target 60 pending tasks per worker (1 worker per 60 tasks)",
+      "scale_in_cooldown": 300,
+      "_scale_in_comment": "Wait 5 minutes before scaling down",
+      "scale_out_cooldown": 60,
+      "_scale_out_comment": "Wait 1 minute before scaling up again",
+
+      "custom_metric": {
+        "namespace": "Harbor/Workers",
+        "metric_name": "QueueDepthPerWorker",
+        "statistic": "Average",
+        "unit": "Count",
+        "dimensions": [{
+          "name": "Environment",
+          "value": "production"
+        }]
+      }
+    }
+  },
+
+  "step_scaling_policies": {
+    "_comment": "Step scaling for more aggressive scaling during high load",
+
+    "scale_up_policy": {
+      "name": "scale-up-on-high-queue",
+      "adjustment_type": "PercentChangeInCapacity",
+      "cooldown": 60,
+      "steps": [
+        {
+          "metric_lower_bound": 0,
+          "metric_upper_bound": 100,
+          "scaling_adjustment": 50,
+          "_comment": "If 0-100 tasks pending: add 50% more workers"
+        },
+        {
+          "metric_lower_bound": 100,
+          "metric_upper_bound": 300,
+          "scaling_adjustment": 100,
+          "_comment": "If 100-300 tasks pending: double workers"
+        },
+        {
+          "metric_lower_bound": 300,
+          "scaling_adjustment": 200,
+          "_comment": "If 300+ tasks pending: triple workers"
+        }
+      ]
+    },
+
+    "scale_down_policy": {
+      "name": "scale-down-on-low-queue",
+      "adjustment_type": "PercentChangeInCapacity",
+      "cooldown": 300,
+      "steps": [
+        {
+          "metric_upper_bound": 0,
+          "scaling_adjustment": -30,
+          "_comment": "If queue empty: remove 30% of workers"
+        }
+      ]
+    }
+  },
+
+  "scheduled_scaling": {
+    "_comment": "Optional: predictable scaling for known busy/quiet periods",
+
+    "business_hours_start": {
+      "name": "scale-up-morning",
+      "schedule": "0 9 * * MON-FRI",
+      "_schedule_comment": "9 AM weekdays (cron in UTC)",
+      "min_size": 5,
+      "max_size": 20,
+      "desired_capacity": 10,
+      "_comment": "Scale up to 10 workers (600 jobs) during business hours"
+    },
+
+    "business_hours_end": {
+      "name": "scale-down-evening",
+      "schedule": "0 18 * * MON-FRI",
+      "_schedule_comment": "6 PM weekdays (cron in UTC)",
+      "min_size": 2,
+      "max_size": 20,
+      "desired_capacity": 3,
+      "_comment": "Scale down to 3 workers (180 jobs) after hours"
+    }
+  }
+}

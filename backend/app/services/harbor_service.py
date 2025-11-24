@@ -89,7 +89,7 @@ class HarborService:
                     "import_path": None,
                     # Use simple OpenAI model name
                     "model_name": model.value,
-                    "override_timeout_sec": None,
+                    "override_timeout_sec": 1800,  # 30 minutes (default is 900 = 15 min)
                     "max_timeout_sec": None,
                     "kwargs": {}
                 }],
