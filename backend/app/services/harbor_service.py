@@ -6,7 +6,6 @@ import subprocess
 from typing import Dict, Any
 from app.models.schemas import ModelType
 from app.services.result_parser import parse_harbor_results, read_harbor_logs
-from app.services.remote_harbor_service import RemoteHarborService
 from app.config import settings
 
 class HarborService:
@@ -24,16 +23,7 @@ class HarborService:
         timeout_multiplier: float = None
     ) -> Dict[str, Any]:
         """Run a single Harbor task execution"""
-        
-        # Check if remote execution is enabled
-        if settings.remote_execution_enabled and settings.remote_host:
-            print(f"[HarborService] Using remote execution on {settings.remote_host}")
-            remote_service = RemoteHarborService(self.openrouter_key)
-            return await remote_service.run_task(
-                task_path, output_dir, run_number, model, timeout_multiplier
-            )
-        
-        # Continue with local execution
+
         if timeout_multiplier is None:
             timeout_multiplier = settings.harbor_timeout_multiplier
         
