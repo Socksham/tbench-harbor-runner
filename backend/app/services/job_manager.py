@@ -79,11 +79,16 @@ async def create_job_and_queue_runs(
 
 async def get_job(session: AsyncSession, job_id: str) -> Job:
     """Get a job by ID"""
+    # Expire all cached objects to force fresh database read
+    session.expire_all()
     result = await session.execute(select(Job).where(Job.id == job_id))
     return result.scalar_one_or_none()
 
 async def get_runs(session: AsyncSession, job_id: str) -> list[Run]:
     """Get all runs for a job"""
+    # Expire all cached objects to force fresh database read
+    # This ensures we see updates from Celery workers immediately
+    session.expire_all()
     result = await session.execute(
         select(Run).where(Run.job_id == job_id).order_by(Run.run_number)
     )
